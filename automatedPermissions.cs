@@ -9,6 +9,7 @@ using SDG.Unturned;
 using Steamworks;
 using System.Net;
 using Newtonsoft.Json;
+using System.Linq;
 using Rocket.API.Serialisation;
 using System.Collections.Generic;
 using Color = UnityEngine.Color;
@@ -21,6 +22,7 @@ namespace automatedPermissions
         private Color JoinMessageColor;
         private Color LeaveMessageColor;
         public static Dictionary<CSteamID, System.DateTime> times = new Dictionary<CSteamID, System.DateTime>();
+
         public struct TimesEntry
         {
             public TimesEntry(CSteamID id, System.DateTime time)
@@ -38,6 +40,7 @@ namespace automatedPermissions
             Instance = this;
 
             U.Events.OnPlayerConnected += Events_OnPlayerConnected;
+            U.Events.OnPlayerDisconnected += Events_OnPlayerDisconnect;
 
             Instance.Configuration.Save();
         }
@@ -45,6 +48,7 @@ namespace automatedPermissions
         protected override void Unload()
         {
             U.Events.OnPlayerConnected -= Events_OnPlayerConnected;
+            U.Events.OnPlayerDisconnected -= Events_OnPlayerDisconnect;
         }
 
         public override TranslationList DefaultTranslations
@@ -53,48 +57,8 @@ namespace automatedPermissions
             {
                 return new TranslationList
                 {
-                    { "connect_message", "{0} connected to the server." },
-                    { "disconnect_message", "{0} disconnected from the server." },
-
-                    { "connect_message_country", "{0} has connected from {1}." }
+                    { "welcome_message", "Welcome {0}! If you keep playing, you will be promoted in {1} Minutes :)" }
                 };
-            }
-        }
-
-        internal Color ParseColor(string color)
-        {
-            if (color == null)
-                return Color.green;
-            switch (color.Trim().ToLower())
-            {
-                case "black":
-                    return Color.black;
-                case "blue":
-                    return Color.blue;
-                case "cyan":
-                    return Color.cyan;
-                case "grey":
-                    return Color.grey;
-                case "green":
-                    return Color.green;
-                case "gray":
-                    return Color.gray;
-                case "magenta":
-                    return Color.magenta;
-                case "red":
-                    return Color.red;
-                case "white":
-                    return Color.white;
-                case "yellow":
-                    return Color.yellow;
-                case "gold":
-                    return new Color(1.0f, 0.843137255f, 0f);
-                default:
-                    float r;
-                    float g;
-                    float b;
-                    string[] colors = color.Split(',');
-                    return (colors.Length == 3 && float.TryParse(colors[0], out r) && float.TryParse(colors[1], out g) && float.TryParse(colors[2], out b) && r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255) ? new Color(r / 255, g / 255, b / 255) : Color.green;
             }
         }
 
@@ -102,17 +66,26 @@ namespace automatedPermissions
         {
 
             List<RocketPermissionsGroup> permissionGroups = R.Permissions.GetGroups(player, true);
-            Logger.Log("PermissionGroups of player " + player.CSteamID + " = " + System.String.Join<RocketPermissionsGroup>(", ", permissionGroups.ToArray()));
+            Logger.Log("PermissionGroups of player " + player.CSteamID + " = " + System.String.Join<string>(", ", permissionGroups.ToArray().Select(perm => perm.DisplayName)));
             if (permissionGroups.Count == 1)
             {
+                string time = string.Format("{0}:{1}", System.Math.Floor((decimal)Instance.Configuration.Instance.intervalUntilPromotionSeconds / 60), (decimal)Instance.Configuration.Instance.intervalUntilPromotionSeconds % 60);
+                UnturnedChat.Say(player, Translate("welcome_message", player.CharacterName, time));
+
                 if (!times.ContainsKey(player.CSteamID))
                 {
                     times.Add(player.CSteamID, System.DateTime.Now);
-                } else
+                }
+                else
                 {
                     times[player.CSteamID] = System.DateTime.Now;
                 }
             }
+        }
+
+        private void Events_OnPlayerDisconnect(UnturnedPlayer player)
+        {
+            times.Remove(player.CSteamID);
         }
 
 
@@ -122,9 +95,15 @@ namespace automatedPermissions
             {
                 UnturnedPlayer player = UnturnedPlayer.FromCSteamID(timeEntry.Key);
                 double timePlayed = (System.DateTime.Now - timeEntry.Value).TotalSeconds;
-                if (timePlayed > Instance.Configuration.Instance.intervalUntilPromotion)
+                if (timePlayed > Instance.Configuration.Instance.intervalUntilPromotionSeconds)
                 {
                     R.Permissions.AddPlayerToGroup("member", player);
+                    Logger.Log(string.Format("Player {0} was automatically added to group ${1}!", player.CSteamID, "member"));
+                    // foreach (Message m in Instance.Configuration.Instance.Messages)
+                    //{
+                    //    UnturnedChat.Say(timeEntry.Key, m.Text, UnturnedChat.GetColorFromName(m.Color, Color.green));
+                    // }
+
                     UnturnedChat.Say(timeEntry.Key, "Congratulations! You were automatically added to group member!");
                     UnturnedChat.Say(timeEntry.Key, "Type /p to see your current Permissions :)");
                     times.Remove(timeEntry.Key);
